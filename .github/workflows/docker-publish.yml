@@ -1,32 +1,79 @@
 name: Docker Build and Push
 
 on:
+  pull_request:
+    branches: [ "main" ]
   push:
     branches: [ "main" ]
 
 jobs:
+  verify:
+    name: Typecheck and test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install devDependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck and unit tests
+        run: npm run typecheck && npm test
+
   build:
     name: Build and push to GitHub Container Registry
-    runs-on: ubuntu-22.04
+    if: github.event_name == 'push'
+    needs: verify
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Set VERSION
-        run: echo "VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
-        
-      - uses: actions/checkout@v4
-  
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
       - name: Login to GitHub Container Registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Docker buildx
-        run: docker buildx create --use
-
-      - name: Run Docker buildx
+      - name: Prepare metadata
+        id: meta
         run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --build-arg VERSION=${{ env.VERSION }} \
-            --tag ghcr.io/${{ github.repository }}:${{ env.VERSION }} \
-            --push . 
+          echo "sha_short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ghcr.io/${{ github.repository }}:main
+            ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.sha_short }}
+          labels: |
+            org.opencontainers.image.source=${{ github.event.repository.html_url }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=Bassin umbrelOS widget server

@@ -1,34 +1,25 @@
-# Use official bun image for the builder
-FROM --platform=$BUILDPLATFORM oven/bun:1.2.2 AS builder
+# syntax=docker/dockerfile:1
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.5-slim@sha256:b780593f3e10918cbdaec3d5a08d52224b9198069a65eb47812085c2ec007643 AS builder
 
-# Set up arguments for targeting builds
 ARG TARGETPLATFORM
-ARG BUILDPLATFORM
-
 WORKDIR /app
 
-# Copy package files first for better caching
-COPY package.json tsconfig.json ./
-RUN bun install
+COPY index.ts tsconfig.json ./
+COPY src ./src
 
-# Copy the rest of the source code
-COPY . .
-
-# Compile as a binary for the target architecture 
+# Zero third-party runtime dependencies: compile directly to a standalone binary.
 RUN case "$TARGETPLATFORM" in \
     "linux/amd64") TARGET="bun-linux-x64-baseline" ;; \
     "linux/arm64") TARGET="bun-linux-arm64" ;; \
     *) echo "Unsupported platform: $TARGETPLATFORM" && exit 1 ;; \
     esac && \
-    bun build --compile --minify --sourcemap ./index.ts --target $TARGET --outfile server
+    bun build --compile --minify ./index.ts --target "$TARGET" --outfile /app/server
 
-# Use a minimal distroless image for the final stage
-# Pinned to digest from 13 Feb 2025
-FROM cgr.dev/chainguard/glibc-dynamic@sha256:c907cf5576de12bb54ac2580a91d0287de55f56bce4ddd66a0edf5ebaba9feed
+# Minimal non-root Chainguard glibc-dynamic runtime pinned by digest.
+FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:3359c6ba6b3bcf3b1d2179849f782365564cb262789e732e2833b25b9a8c00f1
 
-# Copy the compiled binary
 COPY --from=builder /app/server /server
 
-# Run the binary directly
+USER 65532:65532
 EXPOSE 3000
-CMD ["/server"]
+ENTRYPOINT ["/server"]
