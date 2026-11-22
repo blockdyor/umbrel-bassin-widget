@@ -61,8 +61,8 @@ function formatCompact(num: number): string {
   if (!Number.isFinite(num) || num < 0) return '-';
   if (num === 0) return '0';
   if (num >= 100) return num.toFixed(0);
-  if (num >= 10) return num.toFixed(1).replace(/\.0$/, '');
-  return num.toFixed(2).replace(/\.?0+$/, '');
+  if (num >= 10) return String(Number(num.toFixed(1)));
+  return String(Number(num.toFixed(2)));
 }
 
 export function parseHashrateHps(raw: unknown): number | null {
